@@ -1,3 +1,5 @@
+package client;
+
 import javax.swing.*;
 import java.awt.*;
 import java.awt.datatransfer.DataFlavor;
@@ -7,8 +9,12 @@ import java.awt.event.ActionListener;
 import java.io.*;
 import java.net.*;
 import java.nio.file.*;
-import java.util.Properties;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.List;
+import java.util.Properties;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public class FileSyncClient {
     private static String SERVER_ADDRESS;
@@ -17,10 +23,12 @@ public class FileSyncClient {
     private static JTextArea logArea;
     private static JProgressBar progressBar;
     private static DefaultListModel<String> fileListModel;
+    private static ExecutorService executorService = Executors.newFixedThreadPool(2);
 
     public static void main(String[] args) {
         loadConfig();
         setupGUI();
+        startAutoSync();
     }
 
     private static void setupGUI() {
@@ -47,7 +55,7 @@ public class FileSyncClient {
                 if (returnValue == JFileChooser.APPROVE_OPTION) {
                     File[] selectedFiles = fileChooser.getSelectedFiles();
                     for (File file : selectedFiles) {
-                        sendFile(file);
+                        executorService.submit(() -> sendFile(file));
                     }
                 }
             }
@@ -65,7 +73,7 @@ public class FileSyncClient {
                     dtde.acceptDrop(DnDConstants.ACTION_COPY);
                     List<File> droppedFiles = (List<File>) dtde.getTransferable().getTransferData(DataFlavor.javaFileListFlavor);
                     for (File file : droppedFiles) {
-                        sendFile(file);
+                        executorService.submit(() -> sendFile(file));
                     }
                 } catch (Exception ex) {
                     log("Drag & Drop failed: " + ex.getMessage());
@@ -77,6 +85,37 @@ public class FileSyncClient {
         frame.setVisible(true);
     }
 
+    private static void startAutoSync() {
+        Thread autoSyncThread = new Thread(() -> {
+            try {
+                WatchService watchService = FileSystems.getDefault().newWatchService();
+                Path path = Paths.get(CLIENT_FOLDER);
+                path.register(watchService, StandardWatchEventKinds.ENTRY_CREATE, StandardWatchEventKinds.ENTRY_MODIFY);
+
+                log("Auto-sync started. Monitoring folder: " + CLIENT_FOLDER);
+
+                while (true) {
+                    WatchKey key = watchService.take();
+                    for (WatchEvent<?> event : key.pollEvents()) {
+                        WatchEvent.Kind<?> kind = event.kind();
+                        Path filePath = ((WatchEvent<Path>) event).context();
+                        File file = new File(CLIENT_FOLDER, filePath.toString());
+
+                        if (kind == StandardWatchEventKinds.ENTRY_CREATE || kind == StandardWatchEventKinds.ENTRY_MODIFY) {
+                            log("Detected file change: " + file.getName());
+                            executorService.submit(() -> sendFile(file));
+                        }
+                    }
+                    key.reset();
+                }
+            } catch (Exception e) {
+                log("Auto-sync error: " + e.getMessage());
+            }
+        });
+        autoSyncThread.setDaemon(true);
+        autoSyncThread.start();
+    }
+
     private static void sendFile(File file) {
         try (Socket socket = new Socket(SERVER_ADDRESS, PORT);
              DataOutputStream dos = new DataOutputStream(socket.getOutputStream());
@@ -86,6 +125,7 @@ public class FileSyncClient {
             dos.writeUTF(file.getName());
             dos.writeLong(file.length());
             dos.writeLong(file.lastModified());
+            dos.writeUTF(getFileChecksum(file));
 
             boolean shouldSend = dis.readBoolean();
             if (shouldSend) {
@@ -108,6 +148,25 @@ public class FileSyncClient {
             }
         } catch (IOException e) {
             log("Error sending file: " + e.getMessage());
+        }
+    }
+
+    private static String getFileChecksum(File file) throws IOException {
+        try (FileInputStream fis = new FileInputStream(file)) {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] byteArray = new byte[1024];
+            int bytesRead;
+            while ((bytesRead = fis.read(byteArray)) != -1) {
+                digest.update(byteArray, 0, bytesRead);
+            }
+            byte[] bytes = digest.digest();
+            StringBuilder sb = new StringBuilder();
+            for (byte b : bytes) {
+                sb.append(String.format("%02x", b));
+            }
+            return sb.toString();
+        } catch (NoSuchAlgorithmException e) {
+            throw new IOException("Checksum calculation error: " + e.getMessage());
         }
     }
 

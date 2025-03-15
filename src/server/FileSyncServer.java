@@ -1,8 +1,9 @@
+package server;
+
 import javax.swing.*;
 import java.awt.*;
 import java.io.*;
 import java.net.*;
-import java.nio.file.*;
 import java.util.Properties;
 import java.util.concurrent.*;
 
