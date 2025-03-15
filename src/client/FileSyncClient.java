@@ -191,7 +191,7 @@ public class FileSyncClient {
             PORT = Integer.parseInt(properties.getProperty("port", "5000"));
             CLIENT_FOLDER = properties.getProperty("client_folder", "client_folder");
         } catch (IOException e) {
-            SERVER_ADDRESS = "localhost";
+            SERVER_ADDRESS = "host.docker.internal";
             PORT = 5000;
             CLIENT_FOLDER = "client_folder";
         }
