@@ -27,3 +27,12 @@ bin/
 
 ### Mac OS ###
 .DS_Store
+
+### Maven ###
+target/
+
+### Runtime data and local configuration ###
+server_storage/
+client_folder/
+server_config.properties
+client_config.properties
